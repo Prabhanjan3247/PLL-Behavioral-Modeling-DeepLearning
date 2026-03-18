@@ -32,7 +32,24 @@ function predictions = predict_pll_metrics(params_input, model_path)
     mu_Y    = mdl.mu_Y;
     sigma_Y = mdl.sigma_Y;
 
-    log_cols_Y = [1, 3];
+    if isfield(mdl, 'preproc')
+        preproc = mdl.preproc;
+    else
+        preproc.log_cols_in      = [1, 3, 4, 5, 6, 7, 9];
+        preproc.log_cols_out     = [1, 3];
+        preproc.idb_col          = 2;
+        preproc.log_floor_input  = 1e-12;
+        preproc.log_floor_output = 1e-12;
+        preproc.log_floor_idb    = 1e-10;
+        if isfield(mdl, 'log_cols_in')
+            preproc.log_cols_in = mdl.log_cols_in;
+        end
+        if isfield(mdl, 'log_cols_out')
+            preproc.log_cols_out = mdl.log_cols_out;
+        end
+    end
+
+    log_cols_Y = preproc.log_cols_out;
 
     % ---- Parse inputs ------------------------------------------------- %
     if isstruct(params_input)
@@ -52,8 +69,8 @@ function predictions = predict_pll_metrics(params_input, model_path)
 
     % ---- Pre-process -------------------------------------------------- %
     X_t = X_raw;
-    X_t(:, [1,3,4,5,6,7,9]) = log10(abs(X_raw(:, [1,3,4,5,6,7,9])) + eps);
-    X_t(:, 2)                = log10(abs(X_raw(:, 2)) + 1e-10);
+    X_t(:, preproc.log_cols_in) = log10(abs(X_raw(:, preproc.log_cols_in)) + preproc.log_floor_input);
+    X_t(:, preproc.idb_col)     = log10(abs(X_raw(:, preproc.idb_col)) + preproc.log_floor_idb);
     X_norm = (X_t - mu_X) ./ sigma_X;
 
     % ---- Predict ------------------------------------------------------ %

@@ -7,12 +7,13 @@
 %
 %  Pipeline:
 %    1. Generate PLL training data via the analytical behavioral model
-%    2. Train a deep feedforward network (Neural Network Toolbox)
+%    2. Train a deep feedforward network (Deep Learning Toolbox)
 %    3. Evaluate model accuracy on a held-out test set
 %    4. Demonstrate real-time prediction with example PLL specifications
 %
 %  Requirements:
-%    - MATLAB R2019b or later  (no additional toolboxes required)
+%    - MATLAB R2019b or later
+%    - Deep Learning Toolbox
 %
 %  Usage:
 %    Simply run this script.  All outputs are saved to:
@@ -67,21 +68,57 @@ fprintf('  Total samples : %d\n\n', size(X,1));
 %% -----------------------------------------------------------------------
 if isfile(model_path) && ~FORCE_REGENERATE
     fprintf('[Step 2]  Loading existing model: %s\n', model_path);
-    load(model_path, 'net', 'mu_X', 'sigma_X', 'mu_Y', 'sigma_Y', 'train_info');
-    fprintf('          Model loaded.\n\n');
+        mdl = load(model_path);
+        net = mdl.net;
+        mu_X = mdl.mu_X;
+        sigma_X = mdl.sigma_X;
+        mu_Y = mdl.mu_Y;
+        sigma_Y = mdl.sigma_Y;
+        if isfield(mdl, 'train_info')
+                train_info = mdl.train_info;
+        else
+                train_info = struct();
+        end
+        if isfield(mdl, 'preproc')
+                preproc = mdl.preproc;
+        else
+                preproc.log_cols_in      = [1, 3, 4, 5, 6, 7, 9];
+                preproc.log_cols_out     = [1, 3];
+                preproc.idb_col          = 2;
+                preproc.log_floor_input  = 1e-12;
+                preproc.log_floor_output = 1e-12;
+                preproc.log_floor_idb    = 1e-10;
+        end
+
+        % Enforce Deep Learning Toolbox model for compliance
+        if isstruct(net) && isfield(net, 'W')
+                fprintf('          Legacy custom model detected. Retraining with Deep Learning Toolbox...\n\n');
+                [net, mu_X, sigma_X, mu_Y, sigma_Y, train_info] = train_pll_model(X, Y, model_path);
+                preproc.log_cols_in      = [1, 3, 4, 5, 6, 7, 9];
+                preproc.log_cols_out     = [1, 3];
+                preproc.idb_col          = 2;
+                preproc.log_floor_input  = 1e-12;
+                preproc.log_floor_output = 1e-12;
+                preproc.log_floor_idb    = 1e-10;
+        else
+                fprintf('          Model loaded.\n\n');
+        end
 else
     fprintf('[Step 2]  Training deep neural network …\n\n');
     [net, mu_X, sigma_X, mu_Y, sigma_Y, train_info] = train_pll_model(X, Y, model_path);
+        preproc.log_cols_in      = [1, 3, 4, 5, 6, 7, 9];
+        preproc.log_cols_out     = [1, 3];
+        preproc.idb_col          = 2;
+        preproc.log_floor_input  = 1e-12;
+        preproc.log_floor_output = 1e-12;
+        preproc.log_floor_idb    = 1e-10;
 end
-
-% Make train_info available for plot_results
-assignin('base', 'train_info', train_info);
 
 %% -----------------------------------------------------------------------
 %  3.  Evaluate on full dataset (model internally holds split info)
 %% -----------------------------------------------------------------------
 fprintf('\n[Step 3]  Evaluating model …\n');
-metrics = evaluate_model(net, X, Y, mu_X, sigma_X, mu_Y, sigma_Y, output_names);
+metrics = evaluate_model(net, X, Y, mu_X, sigma_X, mu_Y, sigma_Y, output_names, preproc, train_info);
 
 %% -----------------------------------------------------------------------
 %  4.  Example predictions with new PLL specifications
@@ -155,14 +192,20 @@ fprintf('\n[Step 5]  Sensitivity analysis on trained model …\n');
 mdl_sens = load(model_path);
 fields9  = {'fref','Idb','Icp','Ileak','R','C','Kvco','PN_vco','N'};
 
+if isfield(mdl_sens, 'preproc')
+        preproc_sens = mdl_sens.preproc;
+else
+        preproc_sens = preproc;
+end
+
 % Inline normaliser: struct → normalised row vector
 base_params = ex1;
 base_xr = [base_params.fref, base_params.Idb, base_params.Icp, ...
            base_params.Ileak, base_params.R,   base_params.C, ...
            base_params.Kvco,  base_params.PN_vco, base_params.N];
 base_xt = base_xr;
-base_xt([1,3,4,5,6,7,9]) = log10(abs(base_xr([1,3,4,5,6,7,9])) + eps);
-base_xt(2)               = log10(abs(base_xr(2)) + 1e-10);
+base_xt(preproc_sens.log_cols_in) = log10(abs(base_xr(preproc_sens.log_cols_in)) + preproc_sens.log_floor_input);
+base_xt(preproc_sens.idb_col) = log10(abs(base_xr(preproc_sens.idb_col)) + preproc_sens.log_floor_idb);
 base_xn  = (base_xt - mdl_sens.mu_X) ./ mdl_sens.sigma_X;
 base_out = nn_predict(mdl_sens.net, base_xn')';
 base_lt  = 10^(base_out(1)*mdl_sens.sigma_Y(1) + mdl_sens.mu_Y(1));
@@ -173,20 +216,20 @@ for k = 1:9
     % +10% perturbation
     xp = base_xr;  xp(k) = base_xr(k) * 1.10;
     xtp = xp;
-    xtp([1,3,4,5,6,7,9]) = log10(abs(xp([1,3,4,5,6,7,9])) + eps);
-    xtp(2) = log10(abs(xp(2)) + 1e-10);
+        xtp(preproc_sens.log_cols_in) = log10(abs(xp(preproc_sens.log_cols_in)) + preproc_sens.log_floor_input);
+        xtp(preproc_sens.idb_col) = log10(abs(xp(preproc_sens.idb_col)) + preproc_sens.log_floor_idb);
     op = nn_predict(mdl_sens.net, ((xtp - mdl_sens.mu_X)./mdl_sens.sigma_X)')';
 
     % -10% perturbation
     xm = base_xr;  xm(k) = base_xr(k) * 0.90;
     xtm = xm;
-    xtm([1,3,4,5,6,7,9]) = log10(abs(xm([1,3,4,5,6,7,9])) + eps);
-    xtm(2) = log10(abs(xm(2)) + 1e-10);
+        xtm(preproc_sens.log_cols_in) = log10(abs(xm(preproc_sens.log_cols_in)) + preproc_sens.log_floor_input);
+        xtm(preproc_sens.idb_col) = log10(abs(xm(preproc_sens.idb_col)) + preproc_sens.log_floor_idb);
     om = nn_predict(mdl_sens.net, ((xtm - mdl_sens.mu_X)./mdl_sens.sigma_X)')';
 
     lt_p = 10^(op(1)*mdl_sens.sigma_Y(1) + mdl_sens.mu_Y(1));
     lt_m = 10^(om(1)*mdl_sens.sigma_Y(1) + mdl_sens.mu_Y(1));
-    sensitivity(k) = abs(lt_p - lt_m) / max(base_lt, eps) * 100;
+        sensitivity(k) = abs(lt_p - lt_m) / max(base_lt, preproc_sens.log_floor_output) * 100;
     fprintf('    %-12s : %.3f %%\n', fields9{k}, sensitivity(k));
 end
 

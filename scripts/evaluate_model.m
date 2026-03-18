@@ -1,4 +1,4 @@
-function metrics = evaluate_model(net, X, Y, mu_X, sigma_X, mu_Y, sigma_Y, output_names)
+function metrics = evaluate_model(net, X, Y, mu_X, sigma_X, mu_Y, sigma_Y, output_names, preproc, train_info)
 %EVALUATE_MODEL  Compute regression metrics on a dataset.
 %
 %  INPUTS
@@ -7,21 +7,31 @@ function metrics = evaluate_model(net, X, Y, mu_X, sigma_X, mu_Y, sigma_Y, outpu
 %    Y         – [N × 3]  raw output samples
 %    output_names – 1×3 cell of metric labels (optional)
 
+    if nargin < 9 || isempty(preproc)
+        preproc.log_cols_in      = [1, 3, 4, 5, 6, 7, 9];
+        preproc.log_cols_out     = [1, 3];
+        preproc.idb_col          = 2;
+        preproc.log_floor_input  = 1e-12;
+        preproc.log_floor_output = 1e-12;
+        preproc.log_floor_idb    = 1e-10;
+    end
+
+    if nargin < 10
+        train_info = [];
+    end
+
     if nargin < 8 || isempty(output_names)
         output_names = {'LockTime_s', 'PhaseNoise_dBcHz', 'Fout_Hz'};
     end
 
-    log_cols_X = [1, 2, 3, 4, 5, 6, 7, 9];
-    log_cols_Y = [1, 3];
+    log_cols_X = preproc.log_cols_in;
+    log_cols_Y = preproc.log_cols_out;
 
     % ---- Pre-process inputs ------------------------------------------ %
     X_t = X;
-    X_t(:, [1,3,4,5,6,7,9]) = log10(abs(X(:, [1,3,4,5,6,7,9])) + eps);
-    X_t(:, 2)                = log10(abs(X(:, 2)) + 1e-10);
+    X_t(:, log_cols_X)      = log10(abs(X(:, log_cols_X)) + preproc.log_floor_input);
+    X_t(:, preproc.idb_col) = log10(abs(X(:, preproc.idb_col)) + preproc.log_floor_idb);
     X_norm = (X_t - mu_X) ./ sigma_X;
-
-    Y_t = Y;
-    Y_t(:, log_cols_Y) = log10(abs(Y(:, log_cols_Y)) + eps);
 
     % ---- Forward pass ------------------------------------------------- %
     Y_pred_norm = nn_predict(net, X_norm')';      % N × 3
@@ -49,10 +59,10 @@ function metrics = evaluate_model(net, X, Y, mu_X, sigma_X, mu_Y, sigma_Y, outpu
 
         ss_res = sum((yt - yp).^2);
         ss_tot = sum((yt - mean(yt)).^2);
-        r2   = 1 - ss_res / max(ss_tot, eps);
+        r2   = 1 - ss_res / max(ss_tot, preproc.log_floor_output);
         rmse = sqrt(mean((yt - yp).^2));
         mae  = mean(abs(yt - yp));
-        mape = mean(abs((yt - yp) ./ (abs(yt) + eps))) * 100;
+        mape = mean(abs((yt - yp) ./ (abs(yt) + preproc.log_floor_output))) * 100;
 
         fname = output_names{k};
         metrics.(fname).R2   = r2;
@@ -74,5 +84,5 @@ function metrics = evaluate_model(net, X, Y, mu_X, sigma_X, mu_Y, sigma_Y, outpu
 
     % ---- Plots ------------------------------------------------------- %
     fig_dir = fullfile(results_dir, 'figures');
-    plot_results(Y_true_raw, Y_pred_raw, output_names, fig_dir);
+    plot_results(Y_true_raw, Y_pred_raw, output_names, fig_dir, train_info);
 end

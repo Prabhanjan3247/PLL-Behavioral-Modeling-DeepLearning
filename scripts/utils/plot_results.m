@@ -1,10 +1,11 @@
-function plot_results(Y_true, Y_pred, output_names, save_dir)
+function plot_results(Y_true, Y_pred, output_names, save_dir, train_info)
 %PLOT_RESULTS   Scatter-and-regression plots for predicted vs true values.
 %
 %  Y_true     – [N × 3]  ground-truth outputs
 %  Y_pred     – [N × 3]  model predictions
 %  output_names – 1×3 cell of strings (metric labels)
 %  save_dir   – folder to save the figures (created if necessary)
+%  train_info – optional struct with TrainingLoss/ValidationLoss
 
     if nargin < 4 || isempty(save_dir)
         save_dir = fullfile(fileparts(mfilename('fullpath')), ...
@@ -34,7 +35,7 @@ function plot_results(Y_true, Y_pred, output_names, save_dir)
         % R² annotation
         ss_res = sum((yt - yp).^2);
         ss_tot = sum((yt - mean(yt)).^2);
-        r2 = 1 - ss_res / max(ss_tot, eps);
+        r2 = 1 - ss_res / max(ss_tot, 1e-12);
         text(lo + 0.05*(hi-lo), hi - 0.1*(hi-lo), ...
              sprintf('R^2 = %.4f', r2), 'FontSize', 10, 'Color', 'k');
 
@@ -62,23 +63,20 @@ function plot_results(Y_true, Y_pred, output_names, save_dir)
     close(fig);
 
     % ------------------------------------------------------------------ %
-    %  Training error curve (if supplied via global or base workspace)
+    %  Training error curve (if supplied)
     % ------------------------------------------------------------------ %
-    if evalin('base', 'exist(''train_info'',''var'')')
-        info = evalin('base', 'train_info');
-        if isstruct(info) && isfield(info, 'TrainingLoss')
-            fig = figure('Visible', 'off');
-            semilogy(info.TrainingLoss, 'b-', 'LineWidth', 1.5); hold on;
-            if isfield(info, 'ValidationLoss')
-                semilogy(info.ValidationLoss, 'r--', 'LineWidth', 1.5);
-                legend('Training', 'Validation');
-            end
-            xlabel('Epoch'); ylabel('MSE Loss');
-            title('Training / Validation Loss Curve');
-            grid on;
-            saveas(fig, fullfile(save_dir, 'training_loss.png'));
-            close(fig);
+    if nargin >= 5 && isstruct(train_info) && isfield(train_info, 'TrainingLoss')
+        fig = figure('Visible', 'off');
+        semilogy(train_info.TrainingLoss, 'b-', 'LineWidth', 1.5); hold on;
+        if isfield(train_info, 'ValidationLoss')
+            semilogy(train_info.ValidationLoss, 'r--', 'LineWidth', 1.5);
+            legend('Training', 'Validation');
         end
+        xlabel('Epoch'); ylabel('MSE Loss');
+        title('Training / Validation Loss Curve');
+        grid on;
+        saveas(fig, fullfile(save_dir, 'training_loss.png'));
+        close(fig);
     end
 
     fprintf('All plots saved to: %s\n', save_dir);

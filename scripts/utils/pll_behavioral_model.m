@@ -1,4 +1,4 @@
-function [lock_time, phase_noise_out, f_out] = pll_behavioral_model(params)
+function [lock_time, phase_noise_out, f_out, status] = pll_behavioral_model(params)
 %PLL_BEHAVIORAL_MODEL  Compute PLL performance metrics from circuit parameters.
 %
 %  Implements a 2nd-order Type-II charge-pump PLL with a passive lead-lag
@@ -19,6 +19,14 @@ function [lock_time, phase_noise_out, f_out] = pll_behavioral_model(params)
 %    lock_time       Estimated PLL lock time         [s]
 %    phase_noise_out Output phase noise @ 1 MHz off  [dBc/Hz]
 %    f_out           Output (VCO) frequency          [Hz]
+%    status          struct with validity metadata
+
+    status.isValid = true;
+    status.reason = '';
+
+    lock_time = NaN;
+    phase_noise_out = NaN;
+    f_out = NaN;
 
     fref    = params.fref;
     Icp     = params.Icp;
@@ -29,6 +37,19 @@ function [lock_time, phase_noise_out, f_out] = pll_behavioral_model(params)
     Kvco_Hz = params.Kvco;       % Hz/V  → convert below
     PN_vco  = params.PN_vco;     % dBc/Hz @ 1 MHz offset
     N       = params.N;
+
+    % Basic physical sanity checks
+    if any(~isfinite([fref, Icp, Ileak, Idb, R, C, Kvco_Hz, PN_vco, N]))
+        status.isValid = false;
+        status.reason = 'Non-finite parameter detected.';
+        return
+    end
+
+    if fref <= 0 || Icp <= 0 || R <= 0 || C <= 0 || Kvco_Hz <= 0 || N <= 0
+        status.isValid = false;
+        status.reason = 'Non-positive physical parameter detected.';
+        return
+    end
 
     % ------------------------------------------------------------------ %
     %  Derived quantities
@@ -48,8 +69,8 @@ function [lock_time, phase_noise_out, f_out] = pll_behavioral_model(params)
 
     % Guard against degenerate cases
     if omega_n <= 0 || zeta <= 0
-        lock_time       = 1e-2;    % fallback
-        phase_noise_out = -60;
+        status.isValid = false;
+        status.reason = 'Degenerate loop dynamics (omega_n<=0 or zeta<=0).';
         return
     end
 
@@ -67,7 +88,7 @@ function [lock_time, phase_noise_out, f_out] = pll_behavioral_model(params)
     % Dead-band compensation effect on first-cycle phase error
     T_lock_db    = (Idb  / Icp) * (5  / omega_n);
 
-    lock_time = max(T_lock_phase + T_lock_leak + T_lock_db, 1e-9);
+    lock_time = max(T_lock_phase + T_lock_leak + T_lock_db, 1e-12);
 
     % ------------------------------------------------------------------ %
     %  Phase noise at the output @ 1 MHz offset
@@ -109,4 +130,9 @@ function [lock_time, phase_noise_out, f_out] = pll_behavioral_model(params)
                10^(PN_cp_dBcHz   / 10);
 
     phase_noise_out = 10 * log10(max(PN_total, 1e-30));
+
+    if ~isfinite(lock_time) || ~isfinite(phase_noise_out) || ~isfinite(f_out)
+        status.isValid = false;
+        status.reason = 'Non-finite output computed.';
+    end
 end

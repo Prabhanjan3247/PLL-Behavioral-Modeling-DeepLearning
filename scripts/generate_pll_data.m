@@ -57,10 +57,12 @@ function [X, Y, feature_names, output_names] = generate_pll_data(N_samples, save
     %  Simulate every sample
     % ------------------------------------------------------------------ %
     X = [fref, Idb, Icp, Ileak, R, C, Kvco, PN_vco, double(N_div)];
-    Y = zeros(N_samples, 3);
+    Y = NaN(N_samples, 3);
 
     fprintf('Generating %d PLL simulation samples ...\n', N_samples);
     t_start = tic;
+
+    invalid_model = 0;
 
     for i = 1:N_samples
         p.fref   = fref(i);
@@ -73,13 +75,13 @@ function [X, Y, feature_names, output_names] = generate_pll_data(N_samples, save
         p.PN_vco = PN_vco(i);
         p.N      = N_div(i);
 
-        [lt, pn, fo] = pll_behavioral_model(p);
+        [lt, pn, fo, status] = pll_behavioral_model(p);
 
-        % Clamp to physical limits
-        lt = max(min(lt, 1e-2), 1e-9);   % 1 ns – 10 ms
-        pn = max(min(pn, -40), -180);     % dBc/Hz range (realistic PLL: -40 to -180)
-
-        Y(i, :) = [lt, pn, fo];
+        if status.isValid
+            Y(i, :) = [lt, pn, fo];
+        else
+            invalid_model = invalid_model + 1;
+        end
 
         if mod(i, 500) == 0
             fprintf('  %d / %d samples done  (%.1f s elapsed)\n', ...
@@ -87,11 +89,12 @@ function [X, Y, feature_names, output_names] = generate_pll_data(N_samples, save
         end
     end
 
-    % Remove any rows with NaN/Inf
+    % Remove rows with invalid model outputs, NaN or Inf
     valid = all(isfinite(X), 2) & all(isfinite(Y), 2);
     X = X(valid, :);
     Y = Y(valid, :);
     fprintf('Valid samples: %d / %d\n', sum(valid), N_samples);
+    fprintf('Invalid model samples dropped: %d\n', invalid_model);
 
     % ------------------------------------------------------------------ %
     %  Metadata
